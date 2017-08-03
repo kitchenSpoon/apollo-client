@@ -5,7 +5,12 @@ import {
   Request,
 } from './transport/networkInterface';
 
-import { execute, ApolloLink, FetchResult } from 'apollo-link-core';
+import {
+  execute,
+  ApolloLink,
+  FetchResult,
+  Observable as ZenObservable,
+} from 'apollo-link-core';
 
 import {
   ExecutionResult,
@@ -130,6 +135,7 @@ export default class ApolloClient implements DataProxy {
   private proxy: DataProxy | undefined;
   private fragmentMatcher: FragmentMatcherInterface;
   private ssrMode: boolean;
+  private subscriptionMap: Map<string, ZenObservable.Subscription>;
 
   /**
    * Constructs an instance of {@link ApolloClient}.
@@ -228,6 +234,7 @@ export default class ApolloClient implements DataProxy {
     };
 
     if (networkInterface instanceof ApolloLink) {
+      let count = 0;
       this.networkInterface = {
         query: createQuery((request: Request) => {
           return (execute(
@@ -236,29 +243,33 @@ export default class ApolloClient implements DataProxy {
           ) as any) as Observable<ExecutionResult>;
         }),
         subscribe: (request: any, handler: any): string => {
+          if (!this.subscriptionMap) {
+            this.subscriptionMap = new Map<
+              string,
+              ZenObservable.Subscription
+            >();
+          }
+
           const subscription = (execute(
             networkInterface as ApolloLink,
             request,
           ) as any).subscribe({
             next: (data: FetchResult) => handler(data.errors, data.data),
           });
-          return '';
+
+          const id = count.toString();
+          this.subscriptionMap.set(id, subscription);
+          count++;
+          return id;
         },
         unsubscribe: (id: string): void => {
-          // wsClient.unsubscribe(id);
+          if (this.subscriptionMap) {
+            const subscription = this.subscriptionMap.get(id);
+            if (subscription) {
+              subscription.unsubscribe();
+            }
+          }
         },
-      };
-    } else if (
-      networkInterface &&
-      typeof (<ObservableNetworkInterface>networkInterface).request ===
-        'function'
-    ) {
-      console.warn(`The Observable Network interface will be deprecated`);
-      this.networkInterface = {
-        ...networkInterface,
-        query: createQuery(
-          (networkInterface as ObservableNetworkInterface).request,
-        ),
       };
     } else {
       this.networkInterface = networkInterface
